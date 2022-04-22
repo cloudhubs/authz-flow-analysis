@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "authz-flow-analysis",
+    "authz-flow-analysis-web"
+]
+
