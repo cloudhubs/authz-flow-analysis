@@ -1,5 +1,9 @@
+use std::collections::hash_map::Entry;
 use std::path::PathBuf;
-use std::{collections::HashMap, ops::BitOr};
+use std::{
+    collections::HashMap,
+    ops::{BitOr, BitOrAssign},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -108,10 +112,32 @@ pub struct ServiceEndpoint {
 pub struct EndpointCrudAccessResult(HashMap<String, EndpointCrudAccess>);
 
 /// Map of entity names to its crud operations
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EndpointCrudAccess(HashMap<String, CrudOp>);
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default)]
+impl BitOr for EndpointCrudAccess {
+    type Output = EndpointCrudAccess;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        let mut merged = self.0.clone();
+
+        for (entity, crud_op) in self.0 {
+            let other_crud_op = merged.entry(entity).or_insert(crud_op);
+            *other_crud_op |= crud_op;
+            merged.insert(entity, crud_op);
+        }
+
+        EndpointCrudAccess(merged)
+    }
+}
+
+impl BitOrAssign for EndpointCrudAccess {
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = *self | rhs;
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, Eq, PartialEq, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct CrudOp {
     #[serde(default = "bool::default")]
@@ -134,6 +160,12 @@ impl BitOr for CrudOp {
             delete,
             create_update,
         }
+    }
+}
+
+impl BitOrAssign for CrudOp {
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = *self | rhs;
     }
 }
 
@@ -190,6 +222,65 @@ pub fn infer_crud_flows(
         }
     }
     services
+}
+
+/* services Service[]
+ * visited HashMap<Endpoint, ()>
+ *
+ * service Service
+ * endpoint Endpoint
+ *
+ * calls = service.calls.filter(|call| call.from.find(endpoint.path))
+ * visited.insert(endpoint)
+ *
+ * for call in calls {
+ *   called_svc = services.find(service.name)
+ *   called_endpoint = called_svc.endpoints.find(call.path)
+ *   if visited.get(called_endpoint).is_none() {
+ *     // compute permissions
+ *     recurse(services, called_svc, called_endpoint, visited)
+ *   }
+ *   endpoint.flow_crud_access |= called_endpoint.flow_crud_access
+ * }
+ */
+fn visit_crud_flows(
+    services: &Vec<Service>,
+    visited: &mut HashMap<String, ()>, // ServiceEndpoint.name
+    service: &Service,
+    endpoint: &ServiceEndpoint,
+) -> ServiceEndpoint {
+    let calls = service
+        .calls
+        .iter()
+        .filter(|call| call.from.contains(&endpoint.name))
+        .clone();
+    visited.insert(endpoint.name.clone(), ());
+
+    let mut new_endpoint = endpoint.clone();
+
+    for call in calls {
+        let called_svc = match services.iter().find(|svc| svc.name == call.service) {
+            Some(svc) => svc,
+            _ => continue,
+        };
+        let called_endpoint = match called_svc
+            .endpoints
+            .iter()
+            .find(|e| e.name == call.endpoint)
+        {
+            Some(e) => e,
+            _ => continue,
+        };
+
+        let called_endpoint = if !visited.contains_key(&called_endpoint.name) {
+            visit_crud_flows(services, visited, called_svc, called_endpoint)
+        } else {
+            called_endpoint.clone()
+        };
+
+        new_endpoint.flow_crud_access |= called_endpoint.flow_crud_access;
+    }
+    new_endpoint
 }
 
 #[cfg(test)]
