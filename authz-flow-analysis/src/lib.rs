@@ -1,72 +1,9 @@
-use std::collections::hash_map::Entry;
-use std::path::PathBuf;
 use std::{
     collections::HashMap,
     ops::{BitOr, BitOrAssign},
 };
 
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Directory {
-    files: Vec<PathBuf>,
-    sub_directories: Vec<Directory>,
-    path: PathBuf,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-pub enum NodeType {
-    ClassOrInterface,
-    Method,
-    MethodParam,
-    Field,
-    Annotation,
-    AnnotationValuePair,
-    CallExpr,
-    VarDecl,
-    DeclStmt,
-    Ident,
-    Literal,
-    BinaryExpr,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-pub enum Language {
-    Java,
-    Cpp,
-    Python,
-    Go,
-    #[serde(rename = "N/A")]
-    Unknown,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct NodePattern {
-    pub identifier: NodeType,
-    pub subpatterns: Vec<NodePattern>,
-    pub callback: Option<String>,
-    pub essential: bool,
-    pub pattern: String,
-    pub auxiliary_pattern: Option<String>,
-    #[serde(default = "bool::default")]
-    pub transparent: bool,
-    #[serde(default = "Option::default")]
-    pub language: Option<Language>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct RessaInput {
-    project_dir: Directory,
-    patterns: Vec<NodePattern>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct AuthzFlowInput {
-    project_dir: Directory,
-    service_call_patterns: Vec<NodePattern>,
-    authz_rights_patterns: Vec<NodePattern>,
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServiceCallGraph {
@@ -188,10 +125,14 @@ pub fn infer_crud_flows(
     let mut services_aux = services.clone();
 
     let mut visited = HashMap::new();
-    for (i, service) in services.services.iter().enumerate() {
-        for (j, endpoint) in service.endpoints.iter().enumerate() {
-            let new_endpoint =
-                visit_crud_flows(&services.services, &mut visited, service, endpoint);
+    for (i, service) in services.services.clone().iter_mut().enumerate() {
+        for (j, endpoint) in service.endpoints.clone().iter_mut().enumerate() {
+            let new_endpoint = visit_crud_flows(
+                &mut services.services,
+                &mut visited,
+                service.clone(),
+                endpoint.clone(),
+            );
             let service_aux = services_aux.services.get_mut(i).unwrap();
             let endpoint_aux = service_aux.endpoints.get_mut(j).unwrap();
             *endpoint_aux = new_endpoint;
@@ -202,10 +143,10 @@ pub fn infer_crud_flows(
 }
 
 fn visit_crud_flows(
-    services: &Vec<Service>,
+    services: &mut Vec<Service>,
     visited: &mut HashMap<String, ()>, // ServiceEndpoint.name
-    service: &Service,
-    endpoint: &ServiceEndpoint,
+    service: Service,
+    endpoint: ServiceEndpoint,
 ) -> ServiceEndpoint {
     let calls = service
         .calls
@@ -217,16 +158,16 @@ fn visit_crud_flows(
     let mut new_endpoint = endpoint.clone();
 
     for call in calls {
-        let called_svc = match services.iter().find(|svc| svc.name == call.service) {
-            Some(svc) => svc,
+        let mut called_svc = match services.iter_mut().find(|svc| svc.name == call.service) {
+            Some(svc) => svc.clone(),
             _ => continue,
         };
         let called_endpoint = match called_svc
             .endpoints
-            .iter()
+            .iter_mut()
             .find(|e| e.name == call.endpoint)
         {
-            Some(e) => e,
+            Some(e) => e.clone(),
             _ => continue,
         };
 
