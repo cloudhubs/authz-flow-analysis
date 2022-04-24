@@ -5,19 +5,19 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ServiceCallGraph {
     pub services: Vec<Service>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct Service {
     pub name: String,
     pub calls: Vec<ServiceCall>,
     pub endpoints: Vec<ServiceEndpoint>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct ServiceCall {
     pub endpoint: String,
     /// The name of the service being called
@@ -28,7 +28,7 @@ pub struct ServiceCall {
     pub from: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct ServiceEndpoint {
     /// The path of the endpoint
     pub name: String,
@@ -45,7 +45,7 @@ pub struct ServiceEndpoint {
 }
 
 /// Map of endpoint method (source code) name to its accesses
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EndpointCrudAccessResult(HashMap<String, EndpointCrudAccess>);
 
 /// Map of entity names to its crud operations
@@ -61,7 +61,6 @@ impl BitOr for EndpointCrudAccess {
         for (entity, crud_op) in self.0.into_iter().chain(rhs.0.into_iter()) {
             let other_crud_op = merged.entry(entity.clone()).or_insert(crud_op);
             *other_crud_op |= crud_op;
-            merged.insert(entity, crud_op);
         }
 
         EndpointCrudAccess(merged)
@@ -92,11 +91,12 @@ impl BitOr for CrudOp {
         let get = self.get || rhs.get;
         let delete = self.delete || rhs.delete;
         let create_update = self.create_update || rhs.create_update;
-        CrudOp {
+        let result = CrudOp {
             get,
             delete,
             create_update,
-        }
+        };
+        result
     }
 }
 
@@ -231,8 +231,8 @@ fn split_and_get<T>(
     first_ndx: usize,
     second_ndx: usize,
 ) -> Option<(&mut T, &mut T)> {
-    if first_ndx < second_ndx {
-        let (first, second) = slice.split_at_mut(first_ndx);
+    if slice.len() > 1 && first_ndx < second_ndx {
+        let (first, second) = slice.split_at_mut(first_ndx + 1);
         let offset = first.len();
         let first = first.last_mut().unwrap();
         let second_ndx = second_ndx - offset;
@@ -245,9 +245,293 @@ fn split_and_get<T>(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
+    fn split_and_get_one() {
+        let mut s = [1];
+        assert_eq!(split_and_get(&mut s, 0, 1), None);
+    }
+
+    #[test]
+    fn split_and_get_two() {
+        let mut s = [1, 2];
+        assert_eq!(split_and_get(&mut s, 0, 1), Some((&mut 1, &mut 2)));
+    }
+
+    #[test]
+    fn split_and_get_three() {
+        let mut s = [1, 2, 3];
+        assert_eq!(split_and_get(&mut s, 0, 2), Some((&mut 1, &mut 3)));
+        assert_eq!(split_and_get(&mut s, 0, 1), Some((&mut 1, &mut 2)));
+        assert_eq!(split_and_get(&mut s, 1, 2), Some((&mut 2, &mut 3)));
+    }
+
+    fn get_simple_test_input() -> (ServiceCallGraph, EndpointCrudAccessResult) {
+        let services = ServiceCallGraph {
+            services: vec![
+                Service {
+                    name: "one".into(),
+                    endpoints: vec![
+                        ServiceEndpoint {
+                            name: "a".into(),
+                            code_mapping: "a".into(),
+                            ..Default::default()
+                        },
+                        ServiceEndpoint {
+                            name: "b".into(),
+                            code_mapping: "b".into(),
+                            ..Default::default()
+                        },
+                    ],
+                    calls: vec![
+                        ServiceCall {
+                            service: "one".into(),
+                            endpoint: "b".into(),
+                            from: vec!["a".into()],
+                            ..Default::default()
+                        },
+                        ServiceCall {
+                            service: "two".into(),
+                            endpoint: "c".into(),
+                            from: vec!["a".into()],
+                            ..Default::default()
+                        },
+                    ],
+                },
+                Service {
+                    name: "two".into(),
+                    endpoints: vec![ServiceEndpoint {
+                        name: "c".into(),
+                        code_mapping: "c".into(),
+                        ..Default::default()
+                    }],
+                    calls: vec![
+                        ServiceCall {
+                            service: "one".into(),
+                            endpoint: "b".into(),
+                            from: vec!["c".into()],
+                            ..Default::default()
+                        },
+                        ServiceCall {
+                            service: "three".into(),
+                            endpoint: "d".into(),
+                            from: vec!["c".into()],
+                            ..Default::default()
+                        },
+                    ],
+                },
+                Service {
+                    name: "three".into(),
+                    endpoints: vec![ServiceEndpoint {
+                        name: "d".into(),
+                        code_mapping: "d".into(),
+                        ..Default::default()
+                    }],
+                    calls: vec![],
+                },
+            ],
+        };
+
+        let mut eca = HashMap::new();
+
+        let mut a = HashMap::new();
+        a.insert(
+            "Something".into(),
+            CrudOp {
+                get: true,
+                ..Default::default()
+            },
+        );
+
+        let mut b = HashMap::new();
+        b.insert(
+            "User".into(),
+            CrudOp {
+                get: false,
+                delete: true,
+                create_update: true,
+            },
+        );
+
+        let mut c = HashMap::new();
+        c.insert(
+            "User".into(),
+            CrudOp {
+                get: true,
+                ..Default::default()
+            },
+        );
+
+        let mut d = HashMap::new();
+        d.insert(
+            "Something".into(),
+            CrudOp {
+                get: true,
+                delete: true,
+                create_update: true,
+            },
+        );
+
+        eca.insert("a".to_string(), EndpointCrudAccess(a));
+        eca.insert("b".into(), EndpointCrudAccess(b));
+        eca.insert("c".into(), EndpointCrudAccess(c));
+        eca.insert("d".into(), EndpointCrudAccess(d));
+
+        let eca = EndpointCrudAccessResult(eca);
+        (services, eca)
+    }
+
+    fn get_simple_test_expected() -> ServiceCallGraph {
+        let all_perms = CrudOp {
+            get: true,
+            delete: true,
+            create_update: true,
+        };
+        let mut a = HashMap::new();
+
+        a.insert("User".to_string(), all_perms);
+        a.insert("Something".into(), all_perms);
+
+        let mut b = HashMap::new();
+        b.insert(
+            "User".to_string(),
+            CrudOp {
+                get: false,
+                ..all_perms.clone()
+            },
+        );
+
+        let mut c = HashMap::new();
+        c.insert("User".to_string(), all_perms);
+        c.insert("Something".into(), all_perms);
+
+        let mut d = HashMap::new();
+        d.insert("Something".to_string(), all_perms);
+
+        ServiceCallGraph {
+            services: vec![
+                Service {
+                    name: "one".into(),
+                    endpoints: vec![
+                        ServiceEndpoint {
+                            name: "a".into(),
+                            code_mapping: "a".into(),
+                            flow_crud_access: Some(EndpointCrudAccess(a)),
+                            ..Default::default()
+                        },
+                        ServiceEndpoint {
+                            name: "b".into(),
+                            code_mapping: "b".into(),
+                            flow_crud_access: Some(EndpointCrudAccess(b)),
+                            ..Default::default()
+                        },
+                    ],
+                    calls: vec![
+                        ServiceCall {
+                            service: "one".into(),
+                            endpoint: "b".into(),
+                            from: vec!["a".into()],
+                            ..Default::default()
+                        },
+                        ServiceCall {
+                            service: "two".into(),
+                            endpoint: "c".into(),
+                            from: vec!["a".into()],
+                            ..Default::default()
+                        },
+                    ],
+                },
+                Service {
+                    name: "two".into(),
+                    endpoints: vec![ServiceEndpoint {
+                        name: "c".into(),
+                        code_mapping: "c".into(),
+                        flow_crud_access: Some(EndpointCrudAccess(c)),
+                        ..Default::default()
+                    }],
+                    calls: vec![
+                        ServiceCall {
+                            service: "one".into(),
+                            endpoint: "b".into(),
+                            from: vec!["c".into()],
+                            ..Default::default()
+                        },
+                        ServiceCall {
+                            service: "three".into(),
+                            endpoint: "d".into(),
+                            from: vec!["c".into()],
+                            ..Default::default()
+                        },
+                    ],
+                },
+                Service {
+                    name: "three".into(),
+                    endpoints: vec![ServiceEndpoint {
+                        name: "d".into(),
+                        code_mapping: "d".into(),
+                        flow_crud_access: Some(EndpointCrudAccess(d)),
+                        ..Default::default()
+                    }],
+                    calls: vec![],
+                },
+            ],
+        }
+    }
+
+    /*
+     *     a  -----> b
+     *      \        ^
+     *       \       |
+     *        -----> c ---> d
+     *
+     * Service One: { a, b }
+     * Service Two: { c }
+     * Service Three: { d }
+     *
+     * ------ Individual permissions ------
+     * --- User ---
+     *      GET   DELETE   CREATE_UPDATE
+     * a:
+     * b:           x           x
+     * c:    x
+     * d:
+     *
+     * --- Something ---
+     *      GET   DELETE   CREATE_UPDATE
+     * a:    x
+     * b:
+     * c:
+     * d:    x      x           x
+     *
+     * ------ Flow permissions ------
+     * --- User ---
+     *      GET   DELETE   CREATE_UPDATE
+     * a:    x      x           x
+     * b:           x           x
+     * c:    x      x           x
+     * d:
+     *
+     * --- Something ---
+     *      GET   DELETE   CREATE_UPDATE
+     * a:    x      x           x
+     * b:
+     * c:    x      x           x
+     * d:    x      x           x
+     *
+     */
+    #[test]
+    fn test_infer_crud_flows_simple() {
+        let (services, eca) = get_simple_test_input();
+        let services_expected = get_simple_test_expected().services;
+        let services_result = infer_crud_flows(services, eca).services;
+
+        for (svc, svc_expected) in services_result.iter().zip(services_expected.iter()) {
+            for (endpoint, endpoint_expected) in
+                svc.endpoints.iter().zip(svc_expected.endpoints.iter())
+            {
+                assert_eq!(endpoint, endpoint_expected);
+            }
+        }
     }
 }
