@@ -180,39 +180,27 @@ fn visit_crud_flows(
         //
         // To do this, we need to split the services slice in two so the compiler
         // can tell it is safe to pull out two mutable references
-        let (target_endpoint, called_endpoint) = if called_svc < service_ndx {
-            let (services_first, services_second) = services.split_at_mut(called_svc);
-            let offset = services_first.len();
-            let called_endpoint =
-                &mut services_first.last_mut().unwrap().endpoints[called_endpoint];
-            let service_ndx = service_ndx - offset;
-            let target_endpoint = &mut services_second[service_ndx].endpoints[endpoint_ndx];
-            (target_endpoint, called_endpoint)
-        } else if called_svc > service_ndx {
-            let (services_first, services_second) = services.split_at_mut(service_ndx);
-            let called_svc = called_svc - services_first.len();
-            let called_endpoint = &mut services_second[called_svc].endpoints[called_endpoint];
-            let target_endpoint = &mut services_first.last_mut().unwrap().endpoints[endpoint_ndx];
+        let (target_endpoint, called_endpoint) = if called_svc != service_ndx {
+            let (called_svc, target_svc) = if called_svc < service_ndx {
+                split_and_get(services, called_svc, service_ndx).unwrap()
+            } else {
+                let (target_svc, called_svc) =
+                    split_and_get(services, service_ndx, called_svc).unwrap();
+                (called_svc, target_svc)
+            };
+
+            let called_endpoint = &mut called_svc.endpoints[called_endpoint];
+            let target_endpoint = &mut target_svc.endpoints[endpoint_ndx];
             (target_endpoint, called_endpoint)
         } else {
             // If the same service is being accessed then we need to split the endpoints
             // slice that it contains and then pull the references from the split endpoints slice.
             let service = &mut services[service_ndx];
             if called_endpoint < endpoint_ndx {
-                let (endpoints_first, endpoints_second) =
-                    service.endpoints.split_at_mut(called_endpoint);
-                let offset = endpoints_first.len();
-                let called_endpoint = endpoints_first.last_mut().unwrap();
-                let endpoint_ndx = endpoint_ndx - offset;
-                let target_endpoint = &mut endpoints_second[endpoint_ndx];
-                (target_endpoint, called_endpoint)
+                split_and_get(&mut service.endpoints, called_endpoint, endpoint_ndx).unwrap()
             } else if called_endpoint > endpoint_ndx {
-                let (endpoints_first, endpoints_second) =
-                    service.endpoints.split_at_mut(endpoint_ndx);
-                let offset = endpoints_first.len();
-                let target_endpoint = endpoints_first.last_mut().unwrap();
-                let called_endpoint = called_endpoint - offset;
-                let called_endpoint = &mut endpoints_second[called_endpoint];
+                let (target_endpoint, called_endpoint) =
+                    split_and_get(&mut service.endpoints, endpoint_ndx, called_endpoint).unwrap();
                 (target_endpoint, called_endpoint)
             } else {
                 // If the service endpoint is calling itself (same service AND same endpoint)
@@ -235,6 +223,23 @@ fn visit_crud_flows(
             }
             _ => {}
         }
+    }
+}
+
+fn split_and_get<T>(
+    slice: &mut [T],
+    first_ndx: usize,
+    second_ndx: usize,
+) -> Option<(&mut T, &mut T)> {
+    if first_ndx < second_ndx {
+        let (first, second) = slice.split_at_mut(first_ndx);
+        let offset = first.len();
+        let first = first.last_mut().unwrap();
+        let second_ndx = second_ndx - offset;
+        let second = &mut second[second_ndx];
+        Some((first, second))
+    } else {
+        None
     }
 }
 
