@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::{BitOr, BitOrAssign},
 };
 
@@ -122,17 +122,17 @@ pub fn infer_crud_flows(
         }
     }
 
-    let mut visited = HashMap::new();
+    let mut visited = HashSet::new();
 
-    for i in 0..services.services.len() {
-        let mut service = services.services[i].clone();
-        for j in 0..service.endpoints.len() {
-            let endpoint = service.endpoints[j].clone();
-            let new_endpoint =
-                visit_crud_flows(&mut services.services, &mut visited, service, endpoint);
-            let endpoint = &mut services.services[i].endpoints[j];
-            *endpoint = new_endpoint;
-            service = services.services[i].clone();
+    for service_ndx in 0..services.services.len() {
+        let service = services.services[service_ndx].clone();
+        for endpoint_ndx in 0..service.endpoints.len() {
+            visit_crud_flows(
+                &mut services.services,
+                &mut visited,
+                service_ndx,
+                endpoint_ndx,
+            );
         }
     }
 
@@ -141,55 +141,101 @@ pub fn infer_crud_flows(
 
 fn visit_crud_flows(
     services: &mut Vec<Service>,
-    visited: &mut HashMap<String, ()>, // ServiceEndpoint.name
-    service: Service,
-    endpoint: ServiceEndpoint,
-) -> ServiceEndpoint {
+    visited: &mut HashSet<String>, // ServiceEndpoint.name
+    service_ndx: usize,
+    endpoint_ndx: usize,
+) {
+    let service = services[service_ndx].clone();
+    let endpoint = service.endpoints[endpoint_ndx].clone();
     let calls = service
         .calls
         .iter()
         .filter(|call| call.from.contains(&endpoint.name))
         .clone();
-    visited.insert(endpoint.name.clone(), ());
-
-    let mut new_endpoint = endpoint.clone();
+    visited.insert(endpoint.name.clone());
 
     for call in calls {
-        let mut called_svc = match services.iter_mut().find(|svc| svc.name == call.service) {
-            Some(svc) => svc.clone(),
+        let called_svc = match services.iter_mut().position(|svc| svc.name == call.service) {
+            Some(svc) => svc,
             _ => continue,
         };
-        let called_endpoint = match called_svc
+        let called_endpoint = match services[called_svc]
             .endpoints
             .iter_mut()
-            .find(|e| e.name == call.endpoint)
+            .position(|e| e.name == call.endpoint)
         {
-            Some(e) => e.clone(),
+            Some(e) => e,
             _ => continue,
         };
 
+        let called_endpoint_name = services[called_svc].endpoints[called_endpoint].name.clone();
+
         // Recursively populate endpoint CRUD flows
-        let called_endpoint = if !visited.contains_key(&called_endpoint.name) {
-            visit_crud_flows(services, visited, called_svc, called_endpoint)
+        if !visited.contains(&called_endpoint_name) {
+            visit_crud_flows(services, visited, called_svc, called_endpoint);
+        }
+
+        // I know this is extremely ugly. The purpose of this is to extract
+        // two mutable references from the same mutable slice safely.
+        //
+        // To do this, we need to split the services slice in two so the compiler
+        // can tell it is safe to pull out two mutable references
+        let (target_endpoint, called_endpoint) = if called_svc < service_ndx {
+            let (services_first, services_second) = services.split_at_mut(called_svc);
+            let offset = services_first.len();
+            let called_endpoint =
+                &mut services_first.last_mut().unwrap().endpoints[called_endpoint];
+            let service_ndx = service_ndx - offset;
+            let target_endpoint = &mut services_second[service_ndx].endpoints[endpoint_ndx];
+            (target_endpoint, called_endpoint)
+        } else if called_svc > service_ndx {
+            let (services_first, services_second) = services.split_at_mut(service_ndx);
+            let called_svc = called_svc - services_first.len();
+            let called_endpoint = &mut services_second[called_svc].endpoints[called_endpoint];
+            let target_endpoint = &mut services_first.last_mut().unwrap().endpoints[endpoint_ndx];
+            (target_endpoint, called_endpoint)
         } else {
-            called_endpoint.clone()
+            // If the same service is being accessed then we need to split the endpoints
+            // slice that it contains and then pull the references from the split endpoints slice.
+            let service = &mut services[service_ndx];
+            if called_endpoint < endpoint_ndx {
+                let (endpoints_first, endpoints_second) =
+                    service.endpoints.split_at_mut(called_endpoint);
+                let offset = endpoints_first.len();
+                let called_endpoint = endpoints_first.last_mut().unwrap();
+                let endpoint_ndx = endpoint_ndx - offset;
+                let target_endpoint = &mut endpoints_second[endpoint_ndx];
+                (target_endpoint, called_endpoint)
+            } else if called_endpoint > endpoint_ndx {
+                let (endpoints_first, endpoints_second) =
+                    service.endpoints.split_at_mut(endpoint_ndx);
+                let offset = endpoints_first.len();
+                let target_endpoint = endpoints_first.last_mut().unwrap();
+                let called_endpoint = called_endpoint - offset;
+                let called_endpoint = &mut endpoints_second[called_endpoint];
+                (target_endpoint, called_endpoint)
+            } else {
+                // If the service endpoint is calling itself (same service AND same endpoint)
+                // then we don't need to do anything because it already has the CRUD permissions
+                // populated.
+                continue;
+            }
         };
 
         // Merge the endpoint flows
         match (
-            new_endpoint.flow_crud_access.as_mut(),
+            target_endpoint.flow_crud_access.as_mut(),
             called_endpoint.flow_crud_access.clone(),
         ) {
             (Some(new_flow_crud_access), Some(flow_crud_access)) => {
                 *new_flow_crud_access |= flow_crud_access;
             }
             (None, Some(flow_crud_access)) => {
-                new_endpoint.flow_crud_access = Some(flow_crud_access);
+                target_endpoint.flow_crud_access = Some(flow_crud_access);
             }
             _ => {}
         }
     }
-    new_endpoint
 }
 
 #[cfg(test)]
