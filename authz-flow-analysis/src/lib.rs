@@ -122,24 +122,21 @@ pub fn infer_crud_flows(
         }
     }
 
-    let mut services_aux = services.clone();
-
     let mut visited = HashMap::new();
-    for (i, service) in services.services.clone().iter_mut().enumerate() {
-        for (j, endpoint) in service.endpoints.clone().iter_mut().enumerate() {
-            let new_endpoint = visit_crud_flows(
-                &mut services.services,
-                &mut visited,
-                service.clone(),
-                endpoint.clone(),
-            );
-            let service_aux = services_aux.services.get_mut(i).unwrap();
-            let endpoint_aux = service_aux.endpoints.get_mut(j).unwrap();
-            *endpoint_aux = new_endpoint;
+
+    for i in 0..services.services.len() {
+        let mut service = services.services[i].clone();
+        for j in 0..service.endpoints.len() {
+            let endpoint = service.endpoints[j].clone();
+            let new_endpoint =
+                visit_crud_flows(&mut services.services, &mut visited, service, endpoint);
+            let endpoint = &mut services.services[i].endpoints[j];
+            *endpoint = new_endpoint;
+            service = services.services[i].clone();
         }
     }
 
-    services_aux
+    services
 }
 
 fn visit_crud_flows(
