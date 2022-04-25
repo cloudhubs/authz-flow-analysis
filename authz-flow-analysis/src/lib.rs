@@ -197,11 +197,11 @@ fn visit_crud_flows(
             // slice that it contains and then pull the references from the split endpoints slice.
             let service = &mut services[service_ndx];
             if called_endpoint < endpoint_ndx {
-                split_and_get(&mut service.endpoints, called_endpoint, endpoint_ndx).unwrap()
-            } else if called_endpoint > endpoint_ndx {
-                let (target_endpoint, called_endpoint) =
-                    split_and_get(&mut service.endpoints, endpoint_ndx, called_endpoint).unwrap();
+                let (called_endpoint, target_endpoint) =
+                    split_and_get(&mut service.endpoints, called_endpoint, endpoint_ndx).unwrap();
                 (target_endpoint, called_endpoint)
+            } else if called_endpoint > endpoint_ndx {
+                split_and_get(&mut service.endpoints, endpoint_ndx, called_endpoint).unwrap()
             } else {
                 // If the service endpoint is calling itself (same service AND same endpoint)
                 // then we don't need to do anything because it already has the CRUD permissions
