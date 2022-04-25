@@ -473,16 +473,23 @@ mod tests {
                         flow_crud_access: Some(EndpointCrudAccess(d)),
                         ..Default::default()
                     }],
-                    calls: vec![],
+                    calls: vec![ServiceCall {
+                        service: "one".into(),
+                        endpoint: "a".into(),
+                        from: vec!["d".into()],
+                        ..Default::default()
+                    }],
                 },
             ],
         }
     }
 
     /*
-     *     a  -----> b
-     *      \        ^
-     *       \       |
+     *     |-----------------
+     *     v                |
+     *     a  -----> b      |
+     *      \        ^      |
+     *       \       |      |
      *        -----> c ---> d
      *
      * Service One: { a, b }
@@ -511,6 +518,8 @@ mod tests {
      * b:           x           x
      * c:    x      x           x
      * d:
+     *
+     * d's permissions on User are empty because of the cycle with "a"
      *
      * --- Something ---
      *      GET   DELETE   CREATE_UPDATE
