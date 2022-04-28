@@ -81,7 +81,9 @@ pub struct CrudOp {
     #[serde(default = "bool::default")]
     delete: bool,
     #[serde(default = "bool::default")]
-    create_update: bool,
+    create: bool,
+    #[serde(default = "bool::default")]
+    update: bool,
 }
 
 impl BitOr for CrudOp {
@@ -90,11 +92,13 @@ impl BitOr for CrudOp {
     fn bitor(self, rhs: Self) -> Self::Output {
         let get = self.get || rhs.get;
         let delete = self.delete || rhs.delete;
-        let create_update = self.create_update || rhs.create_update;
+        let create = self.create || rhs.create;
+        let update = self.update || rhs.update;
         let result = CrudOp {
             get,
             delete,
-            create_update,
+            create,
+            update,
         };
         result
     }
@@ -350,7 +354,8 @@ mod tests {
             CrudOp {
                 get: false,
                 delete: true,
-                create_update: true,
+                create: true,
+                update: true,
             },
         );
 
@@ -369,7 +374,8 @@ mod tests {
             CrudOp {
                 get: true,
                 delete: true,
-                create_update: true,
+                create: true,
+                update: true,
             },
         );
 
@@ -386,7 +392,8 @@ mod tests {
         let all_perms = CrudOp {
             get: true,
             delete: true,
-            create_update: true,
+            create: true,
+            update: true,
         };
         let mut a = HashMap::new();
 
