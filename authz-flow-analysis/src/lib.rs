@@ -90,12 +90,12 @@ impl BitOr for CrudOp {
     type Output = CrudOp;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        let read = self.read || rhs.read;
+        let get = self.read || rhs.read;
         let delete = self.delete || rhs.delete;
         let create = self.create || rhs.create;
         let update = self.update || rhs.update;
         let result = CrudOp {
-            read,
+            read: get,
             delete,
             create,
             update,
