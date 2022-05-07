@@ -77,7 +77,7 @@ impl BitOrAssign for EndpointCrudAccess {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct CrudOp {
     #[serde(default = "bool::default")]
-    get: bool,
+    read: bool,
     #[serde(default = "bool::default")]
     delete: bool,
     #[serde(default = "bool::default")]
@@ -90,12 +90,12 @@ impl BitOr for CrudOp {
     type Output = CrudOp;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        let get = self.get || rhs.get;
+        let read = self.read || rhs.read;
         let delete = self.delete || rhs.delete;
         let create = self.create || rhs.create;
         let update = self.update || rhs.update;
         let result = CrudOp {
-            get,
+            read,
             delete,
             create,
             update,
@@ -115,8 +115,10 @@ pub fn infer_crud_flows(
     eca: EndpointCrudAccessResult,
 ) -> ServiceCallGraph {
     // Populate the initial level of CRUD permissions
+    let mut endpoints = 0;
     for service in services.services.iter_mut() {
         for endpoint in service.endpoints.iter_mut() {
+            endpoints += 1;
             let access = match eca.0.get(&endpoint.code_mapping) {
                 Some(access) => access,
                 _ => continue,
@@ -128,15 +130,21 @@ pub fn infer_crud_flows(
 
     let mut visited = HashSet::new();
 
-    for service_ndx in 0..services.services.len() {
-        let service = services.services[service_ndx].clone();
-        for endpoint_ndx in 0..service.endpoints.len() {
-            visit_crud_flows(
-                &mut services.services,
-                &mut visited,
-                service_ndx,
-                endpoint_ndx,
-            );
+    let mut permissions_changed = false;
+    for _ in 0..endpoints {
+        for service_ndx in 0..services.services.len() {
+            let service = services.services[service_ndx].clone();
+            for endpoint_ndx in 0..service.endpoints.len() {
+                permissions_changed = visit_crud_flows(
+                    &mut services.services,
+                    &mut visited,
+                    service_ndx,
+                    endpoint_ndx,
+                ) || permissions_changed;
+            }
+        }
+        if !permissions_changed {
+            break;
         }
     }
 
@@ -148,7 +156,7 @@ fn visit_crud_flows(
     visited: &mut HashSet<String>, // ServiceEndpoint.name
     service_ndx: usize,
     endpoint_ndx: usize,
-) {
+) -> bool {
     let service = services[service_ndx].clone();
     let endpoint = service.endpoints[endpoint_ndx].clone();
     let calls = service
@@ -157,6 +165,8 @@ fn visit_crud_flows(
         .filter(|call| call.from.contains(&endpoint.name))
         .clone();
     visited.insert(endpoint.name.clone());
+
+    let mut permissions_changed = false;
 
     for call in calls {
         let called_svc = match services.iter_mut().position(|svc| svc.name == call.service) {
@@ -171,13 +181,6 @@ fn visit_crud_flows(
             Some(e) => e,
             _ => continue,
         };
-
-        let called_endpoint_name = services[called_svc].endpoints[called_endpoint].name.clone();
-
-        // Recursively populate endpoint CRUD flows
-        if !visited.contains(&called_endpoint_name) {
-            visit_crud_flows(services, visited, called_svc, called_endpoint);
-        }
 
         // I know this is extremely ugly. The purpose of this is to extract
         // two mutable references from the same mutable slice safely.
@@ -215,19 +218,25 @@ fn visit_crud_flows(
         };
 
         // Merge the endpoint flows
-        match (
+        let change = match (
             target_endpoint.flow_crud_access.as_mut(),
             called_endpoint.flow_crud_access.clone(),
         ) {
             (Some(new_flow_crud_access), Some(flow_crud_access)) => {
+                let old = new_flow_crud_access.clone();
                 *new_flow_crud_access |= flow_crud_access;
+                *new_flow_crud_access != old
             }
             (None, Some(flow_crud_access)) => {
                 target_endpoint.flow_crud_access = Some(flow_crud_access);
+                true
             }
-            _ => {}
-        }
+            _ => false,
+        };
+        permissions_changed = permissions_changed || change;
     }
+
+    permissions_changed
 }
 
 fn split_and_get<T>(
@@ -332,7 +341,12 @@ mod tests {
                         code_mapping: "d".into(),
                         ..Default::default()
                     }],
-                    calls: vec![],
+                    calls: vec![ServiceCall {
+                        service: "one".into(),
+                        endpoint: "a".into(),
+                        from: vec!["d".into()],
+                        ..Default::default()
+                    }],
                 },
             ],
         };
@@ -343,7 +357,7 @@ mod tests {
         a.insert(
             "Something".into(),
             CrudOp {
-                get: true,
+                read: true,
                 ..Default::default()
             },
         );
@@ -352,7 +366,7 @@ mod tests {
         b.insert(
             "User".into(),
             CrudOp {
-                get: false,
+                read: false,
                 delete: true,
                 create: true,
                 update: true,
@@ -363,7 +377,7 @@ mod tests {
         c.insert(
             "User".into(),
             CrudOp {
-                get: true,
+                read: true,
                 ..Default::default()
             },
         );
@@ -372,7 +386,7 @@ mod tests {
         d.insert(
             "Something".into(),
             CrudOp {
-                get: true,
+                read: true,
                 delete: true,
                 create: true,
                 update: true,
@@ -390,7 +404,7 @@ mod tests {
 
     fn get_simple_test_expected() -> ServiceCallGraph {
         let all_perms = CrudOp {
-            get: true,
+            read: true,
             delete: true,
             create: true,
             update: true,
@@ -404,7 +418,7 @@ mod tests {
         b.insert(
             "User".to_string(),
             CrudOp {
-                get: false,
+                read: false,
                 ..all_perms.clone()
             },
         );
@@ -414,6 +428,7 @@ mod tests {
         c.insert("Something".into(), all_perms);
 
         let mut d = HashMap::new();
+        d.insert("User".to_string(), all_perms);
         d.insert("Something".to_string(), all_perms);
 
         ServiceCallGraph {
@@ -524,7 +539,7 @@ mod tests {
      * a:    x      x           x
      * b:           x           x
      * c:    x      x           x
-     * d:
+     * d:    x      x           x
      *
      * d's permissions on User are empty because of the cycle with "a"
      *
