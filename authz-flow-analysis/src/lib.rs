@@ -173,7 +173,15 @@ fn visit_crud_flows(
     let calls = service
         .calls
         .iter()
-        .filter(|call| call.from.iter().any(|s| s.contains(&endpoint.name)))
+        .filter(|call| {
+            call.from.iter().any(|s| {
+                let error = format!("bad format: {}", s);
+                let mut s = s.split(" ");
+                let method = s.next().expect(&error);
+                let from = s.next().expect(&error);
+                method == endpoint.method && from == endpoint.name
+            })
+        })
         .collect::<Vec<_>>();
     visited.insert(endpoint.name.clone());
 
@@ -192,7 +200,7 @@ fn visit_crud_flows(
         let called_endpoint = match services[called_svc]
             .endpoints
             .iter_mut()
-            .position(|e| e.name == call.endpoint)
+            .position(|e| e.name == call.endpoint && e.method == call.method)
         {
             Some(e) => e,
             _ => {
