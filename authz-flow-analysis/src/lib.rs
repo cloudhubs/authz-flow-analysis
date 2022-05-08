@@ -1,3 +1,4 @@
+use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     ops::{BitOr, BitOrAssign},
@@ -116,9 +117,13 @@ pub fn infer_crud_flows(
 ) -> ServiceCallGraph {
     // Populate the initial level of CRUD permissions
     let mut endpoints = 0;
+    let slug_regex = Regex::new(r#"\{[^}]*\}"#).expect("Regex didn't compile");
     for service in services.services.iter_mut() {
         for endpoint in service.endpoints.iter_mut() {
             endpoints += 1;
+
+            endpoint.name = slug_regex.replace_all(&endpoint.name, "{}").to_string();
+
             let access = match eca.0.get(&endpoint.code_mapping) {
                 Some(access) => access,
                 _ => continue,
