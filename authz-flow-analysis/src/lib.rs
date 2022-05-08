@@ -6,6 +6,12 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Deserialize)]
+pub struct DebugInput {
+    pub graph: ServiceCallGraph,
+    pub eca: EndpointCrudAccessResult,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ServiceCallGraph {
     pub services: Vec<Service>,
@@ -167,16 +173,21 @@ fn visit_crud_flows(
     let calls = service
         .calls
         .iter()
-        .filter(|call| call.from.contains(&endpoint.name))
-        .clone();
+        .filter(|call| call.from.iter().any(|s| s.contains(&endpoint.name)))
+        .collect::<Vec<_>>();
     visited.insert(endpoint.name.clone());
 
     let mut permissions_changed = false;
 
+    let name = endpoint.name.clone();
+
     for call in calls {
         let called_svc = match services.iter_mut().position(|svc| svc.name == call.service) {
             Some(svc) => svc,
-            _ => continue,
+            _ => {
+                println!("could not find svc {}", call.service);
+                continue;
+            }
         };
         let called_endpoint = match services[called_svc]
             .endpoints
@@ -184,8 +195,18 @@ fn visit_crud_flows(
             .position(|e| e.name == call.endpoint)
         {
             Some(e) => e,
-            _ => continue,
+            _ => {
+                println!(
+                    "could find find endpoint {} in svc {}",
+                    call.endpoint, call.service
+                );
+                continue;
+            }
         };
+
+        let called_endpoint_name = services[called_svc].endpoints[called_endpoint].name.clone();
+
+        println!("{name} -> {called_endpoint_name}");
 
         // I know this is extremely ugly. The purpose of this is to extract
         // two mutable references from the same mutable slice safely.

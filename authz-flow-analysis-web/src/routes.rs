@@ -5,7 +5,9 @@ use authz_flow_analysis::{EndpointCrudAccessResult, ServiceCallGraph};
 use axum::{routing::post, Json, Router};
 
 pub fn routes() -> Router {
-    Router::new().route("/crudflow/analyze", post(analyze_crudflow))
+    Router::new()
+        .route("/crudflow/analyze", post(analyze_crudflow))
+        .route("/crudflow2", post(analyze_crudflow2))
 }
 
 pub async fn analyze_crudflow(
@@ -29,5 +31,14 @@ pub async fn analyze_crudflow(
     Ok(Json(authz_flow_analysis::infer_crud_flows(
         call_graph?,
         crud_roles?,
+    )))
+}
+
+pub async fn analyze_crudflow2(
+    Json(input): Json<authz_flow_analysis::DebugInput>,
+) -> Result<Json<ServiceCallGraph>, Error> {
+    Ok(Json(authz_flow_analysis::infer_crud_flows(
+        input.graph,
+        input.eca,
     )))
 }
